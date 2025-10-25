@@ -26,12 +26,14 @@ async def shell_cmd(cmd):
         else:
             return errorz.decode("utf-8")
     return out.decode("utf-8")
-
-
+    
 async def get_stream_url(query, video=False):
     """
-    Updated: Downloads and caches files from NottyAPI for Telegram voice chat streaming.
-    Returns the local file path.
+    ✅ Memory efficient & streaming friendly
+    - Uses cached file if available
+    - Hits API every time (hit count)
+    - Downloads file in chunks if not cached
+    - Returns local file path for Telegram VC streaming
     """
 
     # 🔹 API Configuration
@@ -40,14 +42,32 @@ async def get_stream_url(query, video=False):
     endpoint = "/ytmp4" if video else "/ytmp3"
     api_url = f"{api_base}{endpoint}"
 
-    # 🔹 Ensure downloads directory exists
+    # 🔹 Ensure downloads folder exists
     os.makedirs("downloads", exist_ok=True)
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        params = {"url": query, "api_key": api_key}
-        try:
-            response = await client.get(api_url, params=params)
+    # 🔹 Prepare safe local path
+    filename_safe = query.replace("/", "_").replace(":", "_")
+    ext = ".mp4" if video else ".mp3"
+    local_path = os.path.join("downloads", filename_safe + ext)
 
+    # 🔸 Check cache first
+    if os.path.exists(local_path) and os.path.getsize(local_path) > 1024:
+        print(f"🧠 Cached file found: {local_path}")
+
+        # 🔹 Hit API to increase hit count only
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                await client.get(api_url, params={"url": query, "api_key": api_key})
+                print(f"✅ API hit counted for {query}")
+            except Exception as e:
+                print(f"⚠️ API hit failed: {e}")
+
+        return local_path
+
+    # 🔹 If file not cached, download it in chunks
+    async with httpx.AsyncClient(timeout=120) as client:
+        try:
+            response = await client.get(api_url, params={"url": query, "api_key": api_key})
             if response.status_code != 200:
                 print(f"❌ HTTP Error: {response.status_code}")
                 return None
@@ -58,30 +78,27 @@ async def get_stream_url(query, video=False):
                 return None
 
             file_url = data["url"]
-            filename = data.get("filename", "unknown.mp3").replace("/", "_")
-            local_path = os.path.join("downloads", filename)
+            print(f"⬇️ Downloading: {local_path}")
 
-            # 🔸 Check cache
-            if os.path.exists(local_path) and os.path.getsize(local_path) > 1024:
-                print(f"🧠 Cached file found: {local_path}")
-                return local_path
-
-            print(f"⬇️ Downloading: {filename}")
-
-            # 🔹 Download the file
+            # 🔹 Chunked download using aiohttp
             async with aiohttp.ClientSession() as session:
                 async with session.get(file_url) as resp:
-                    if resp.status == 200:
-                        async with aiofiles.open(local_path, "wb") as f:
-                            await f.write(await resp.read())
-                        print(f"✅ Download complete: {local_path}")
-                        return local_path
-                    else:
+                    if resp.status != 200:
                         print(f"❌ File download failed: HTTP {resp.status}")
                         return None
 
+                    async with aiofiles.open(local_path, "wb") as f:
+                        while True:
+                            chunk = await resp.content.read(8192)  # 8 KB chunks
+                            if not chunk:
+                                break
+                            await f.write(chunk)
+
+            print(f"✅ Download complete: {local_path}")
+            return local_path
+
         except Exception as e:
-            print(f"💥 Error calling NottyAPI or downloading: {e}")
+            print(f"💥 Error downloading or hitting API: {e}")
             return None
 
 
