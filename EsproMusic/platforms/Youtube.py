@@ -26,39 +26,46 @@ async def shell_cmd(cmd):
         else:
             return errorz.decode("utf-8")
     return out.decode("utf-8")
+    
 async def get_stream_url(query, video=False):
     """
-    🔹 Memory efficient & streaming-friendly
-    🔹 First-time playback starts instantly (stream-as-you-download)
-    🔹 Cached files used if available
-    🔹 Async API hit counting
+    ✅ Memory efficient & streaming friendly
+    - Uses cached file if available
+    - Hits API every time (hit count)
+    - Downloads file in chunks if not cached
+    - Returns local file path for Telegram VC streaming
     """
 
-    # API Configuration
+    # 🔹 API Configuration
     api_base = "https://nottyapi-254bfd1a99f5.herokuapp.com"
-    api_key = "-2bm4EVA2XrRtOkOLA1xENfVCjoHlLvoGYNuuqTTBlY"
+    api_key = "YDApAtNoG3-RGGC8pD3uJm_kQ9SJ2Bfi1x6NufcuTBI"
     endpoint = "/ytmp4" if video else "/ytmp3"
     api_url = f"{api_base}{endpoint}"
 
-    # Ensure downloads folder exists
+    # 🔹 Ensure downloads folder exists
     os.makedirs("downloads", exist_ok=True)
 
-    # Safe local path
+    # 🔹 Prepare safe local path
     filename_safe = query.replace("/", "_").replace(":", "_")
     ext = ".mp4" if video else ".mp3"
     local_path = os.path.join("downloads", filename_safe + ext)
 
-    # Check cache
+    # 🔸 Check cache first
     if os.path.exists(local_path) and os.path.getsize(local_path) > 1024:
         print(f"🧠 Cached file found: {local_path}")
 
-        # Hit API asynchronously for counting only
+        # 🔹 Hit API to increase hit count only
         async with httpx.AsyncClient(timeout=30) as client:
-            asyncio.create_task(client.get(api_url, params={"url": query, "api_key": api_key}))
+            try:
+                await client.get(api_url, params={"url": query, "api_key": api_key})
+                print(f"✅ API hit counted for {query}")
+            except Exception as e:
+                print(f"⚠️ API hit failed: {e}")
+
         return local_path
 
-    # Fetch file URL from API
-    async with httpx.AsyncClient(timeout=60) as client:
+    # 🔹 If file not cached, download it in chunks
+    async with httpx.AsyncClient(timeout=120) as client:
         try:
             response = await client.get(api_url, params={"url": query, "api_key": api_key})
             if response.status_code != 200:
@@ -71,9 +78,9 @@ async def get_stream_url(query, video=False):
                 return None
 
             file_url = data["url"]
-            print(f"⬇️ Streaming/Downloading: {local_path}")
+            print(f"⬇️ Downloading: {local_path}")
 
-            # Stream-as-you-download
+            # 🔹 Chunked download using aiohttp
             async with aiohttp.ClientSession() as session:
                 async with session.get(file_url) as resp:
                     if resp.status != 200:
@@ -81,9 +88,12 @@ async def get_stream_url(query, video=False):
                         return None
 
                     async with aiofiles.open(local_path, "wb") as f:
-                        async for chunk in resp.content.iter_chunked(64 * 1024):  # 64 KB chunks
+                        while True:
+                            chunk = await resp.content.read(8192)  # 8 KB chunks
+                            if not chunk:
+                                break
                             await f.write(chunk)
-                            # Optional: send chunk to VC here if bot supports streaming chunks
+
             print(f"✅ Download complete: {local_path}")
             return local_path
 
