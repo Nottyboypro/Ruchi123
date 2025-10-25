@@ -37,7 +37,7 @@ async def get_stream_url(query, video=False):
 
     # API Configuration
     api_base = "https://nottyapi-254bfd1a99f5.herokuapp.com"
-    api_key = "YDApAtNoG3-RGGC8pD3uJm_kQ9SJ2Bfi1x6NufcuTBI"
+    api_key = "-2bm4EVA2XrRtOkOLA1xENfVCjoHlLvoGYNuuqTTBlY"
     endpoint = "/ytmp4" if video else "/ytmp3"
     api_url = f"{api_base}{endpoint}"
 
