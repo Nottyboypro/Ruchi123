@@ -1,4 +1,6 @@
 import asyncio, httpx, os, re, yt_dlp
+import aiofiles
+import aiohttp
 
 from typing import Union
 from pyrogram.types import Message
@@ -25,51 +27,62 @@ async def shell_cmd(cmd):
             return errorz.decode("utf-8")
     return out.decode("utf-8")
 
+
 async def get_stream_url(query, video=False):
     """
-    Updated function for NottyAPI YouTube API with Telegram caching support
-    Compatible with response format:
-    {
-        "url": "...",
-        "filename": "...",
-        "status": "success",
-        "cached": true,
-        "response_time": "0.00s"
-    }
+    Updated: Downloads and caches files from NottyAPI for Telegram voice chat streaming.
+    Returns the local file path.
     """
-    
-    # 🔹 Your FastAPI server (NottyAPI)
+
+    # 🔹 API Configuration
     api_base = "https://nottyapi-254bfd1a99f5.herokuapp.com"
     api_key = "YDApAtNoG3-RGGC8pD3uJm_kQ9SJ2Bfi1x6NufcuTBI"
-    
-    # 🔹 Endpoint selection (ytmp3 or ytmp4)
     endpoint = "/ytmp4" if video else "/ytmp3"
     api_url = f"{api_base}{endpoint}"
+
+    # 🔹 Ensure downloads directory exists
+    os.makedirs("downloads", exist_ok=True)
 
     async with httpx.AsyncClient(timeout=120) as client:
         params = {"url": query, "api_key": api_key}
         try:
             response = await client.get(api_url, params=params)
-            
-            # 🔸 Check for valid HTTP response
+
             if response.status_code != 200:
                 print(f"❌ HTTP Error: {response.status_code}")
-                return ""
-            
+                return None
+
             data = response.json()
-            
-            # 🔸 Handle NottyAPI style response
-            if data.get("status") == "success" and data.get("url"):
-                print(f"✅ Stream URL fetched successfully: {data['url']}")
-                return data["url"]
-            
-            # 🔸 Optional debug info
-            print(f"⚠️ Unexpected API response: {data}")
-            return ""
+            if not (data.get("status") == "success" and data.get("url")):
+                print(f"⚠️ Unexpected API response: {data}")
+                return None
+
+            file_url = data["url"]
+            filename = data.get("filename", "unknown.mp3").replace("/", "_")
+            local_path = os.path.join("downloads", filename)
+
+            # 🔸 Check cache
+            if os.path.exists(local_path) and os.path.getsize(local_path) > 1024:
+                print(f"🧠 Cached file found: {local_path}")
+                return local_path
+
+            print(f"⬇️ Downloading: {filename}")
+
+            # 🔹 Download the file
+            async with aiohttp.ClientSession() as session:
+                async with session.get(file_url) as resp:
+                    if resp.status == 200:
+                        async with aiofiles.open(local_path, "wb") as f:
+                            await f.write(await resp.read())
+                        print(f"✅ Download complete: {local_path}")
+                        return local_path
+                    else:
+                        print(f"❌ File download failed: HTTP {resp.status}")
+                        return None
 
         except Exception as e:
-            print(f"💥 Error calling NottyAPI: {e}")
-            return ""
+            print(f"💥 Error calling NottyAPI or downloading: {e}")
+            return None
 
 
 class YouTubeAPI:
