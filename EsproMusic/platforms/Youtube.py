@@ -27,82 +27,99 @@ async def shell_cmd(cmd):
             return errorz.decode("utf-8")
     return out.decode("utf-8")
 
-async def get_stream_url(query):
+async def get_stream_url(query, video=False):
     """
-    ⚡ Ultra-Optimized Audio Downloader for Telegram VC
-    🔹 Always 320kbps audio quality
-    🔹 Smart pre-buffer system for instant + stable playback
-    🔹 Async API hit counting
-    🔹 Cache reuse for repeated plays
+    ⚡ Ultra-Fast YouTube Downloader + Instant Streaming
+    - Starts streaming after 10% download
+    - Continues downloading in background
+    - Caches for future instant playback
+    - High bitrate audio/video
     """
 
-    # 🔹 API Configuration (audio only)
     api_base = "https://nottyapi-254bfd1a99f5.herokuapp.com"
     api_key = "-2bm4EVA2XrRtOkOLA1xENfVCjoHlLvoGYNuuqTTBlY"
-    endpoint = "/ytmp3"
+    endpoint = "/ytmp4" if video else "/ytmp3"
     api_url = f"{api_base}{endpoint}"
 
-    # 🔹 Ensure downloads folder exists
     os.makedirs("downloads", exist_ok=True)
+    filename_safe = query.replace("/", "_").replace(":", "_")
+    ext = ".mp4" if video else ".mp3"
+    local_path = os.path.join("downloads", filename_safe + ext)
+    temp_path = local_path + ".part"  # temporary partial file
 
-    # 🔹 Safe local path
-    filename_safe = query.replace("/", "_").replace(":", "_").replace("?", "_")
-    local_path = os.path.join("downloads", filename_safe + ".mp3")
-
-    # 🔸 Check cache first
+    # 🔹 If cached, return immediately
     if os.path.exists(local_path) and os.path.getsize(local_path) > 1024:
-        print(f"🧠 Cached audio found: {local_path}")
-
-        # Hit API asynchronously for usage count
-        async with httpx.AsyncClient(timeout=30) as client:
-            asyncio.create_task(client.get(api_url, params={"url": query, "api_key": api_key}))
+        print(f"🧠 Cached file found: {local_path}")
+        asyncio.create_task(
+            httpx.AsyncClient(timeout=10).get(api_url, params={"url": query, "api_key": api_key})
+        )
         return local_path
 
-    # 🔸 Fetch high-quality audio URL
-    async with httpx.AsyncClient(timeout=90) as client:
-        try:
-            response = await client.get(api_url, params={"url": query, "api_key": api_key, "quality": "320"})
+    try:
+        # 🔹 Step 1: Get file URL
+        async with httpx.AsyncClient(timeout=40) as client:
+            response = await client.get(api_url, params={"url": query, "api_key": api_key})
             if response.status_code != 200:
                 print(f"❌ API Error: {response.status_code}")
                 return None
-
             data = response.json()
             if not (data.get("status") == "success" and data.get("url")):
                 print(f"⚠️ Invalid API response: {data}")
                 return None
 
             file_url = data["url"]
-            print(f"🎧 Starting high-quality (320kbps) download: {local_path}")
+            print(f"🎧 Streaming from: {file_url}")
 
-            # 🔹 Stream-as-you-download with pre-buffer
-            buffer_ready = False
-            downloaded = 0
-            BUFFER_LIMIT = 2_500_000  # ≈2.5MB pre-buffer before playback starts
+        # 🔹 Step 2: Stream-as-you-download
+        async with aiohttp.ClientSession() as session:
+            async with session.get(file_url, timeout=aiohttp.ClientTimeout(total=None)) as resp:
+                if resp.status != 200:
+                    print(f"❌ Download failed: HTTP {resp.status}")
+                    return None
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(file_url) as resp:
-                    if resp.status != 200:
-                        print(f"❌ File download failed: HTTP {resp.status}")
-                        return None
+                total = resp.content_length or 0
+                chunk_size = 256 * 1024  # 256 KB for faster speed
+                downloaded = 0
+                started_stream = False
 
-                    async with aiofiles.open(local_path, "wb") as f:
-                        async for chunk in resp.content.iter_chunked(128 * 1024):  # 128 KB chunks for speed
-                            await f.write(chunk)
-                            downloaded += len(chunk)
+                async with aiofiles.open(temp_path, "wb") as f:
+                    async for chunk in resp.content.iter_chunked(chunk_size):
+                        await f.write(chunk)
+                        downloaded += len(chunk)
 
-                            # 🎵 Start playback after pre-buffer ready
-                            if not buffer_ready and downloaded >= BUFFER_LIMIT:
-                                buffer_ready = True
-                                print(f"🚀 Buffer ready ({downloaded/1024/1024:.2f} MB) → Start streaming VC")
-                                # 👉 Trigger your VC playback function here, example:
-                                # asyncio.create_task(start_vc_playback(local_path))
+                        # Start stream once 10% is ready
+                        if not started_stream and total > 0 and downloaded >= total * 0.1:
+                            started_stream = True
+                            print("🎶 10% ready — starting stream instantly!")
+                            # Return early to start VC stream, background continues
+                            asyncio.create_task(_finish_download(resp, f, local_path, temp_path))
+                            return temp_path
 
-            print(f"✅ Full audio download complete: {local_path}")
-            return local_path
+                # Completed fully (if total < 10MB or finished before trigger)
+                await f.flush()
+                os.replace(temp_path, local_path)
+                print(f"✅ Download complete: {local_path}")
+                return local_path
 
-        except Exception as e:
-            print(f"💥 Download/API error: {e}")
-            return None
+    except Exception as e:
+        print(f"💥 Error: {e}")
+        return None
+
+
+async def _finish_download(resp, file_obj, final_path, temp_path):
+    """
+    Continue downloading remaining chunks in background
+    after streaming has already started.
+    """
+    try:
+        async for chunk in resp.content.iter_chunked(256 * 1024):
+            await file_obj.write(chunk)
+        await file_obj.flush()
+        await file_obj.close()
+        os.replace(temp_path, final_path)
+        print(f"✅ Background download finished: {final_path}")
+    except Exception as e:
+        print(f"⚠️ Background download failed: {e}")
 
 
 class YouTubeAPI:
