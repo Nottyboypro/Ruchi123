@@ -27,8 +27,6 @@ async def shell_cmd(cmd):
         else:
             return errorz.decode("utf-8")
     return out.decode("utf-8")
-    
-async def get_stream_url(query, video=False):
 
 async def get_stream_url(query, video=False):
     """
