@@ -6,6 +6,7 @@ from typing import Union
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
 from youtubesearchpython.__future__ import VideosSearch
+from ..logging import LOGGER
 
 
 def time_to_seconds(time):
