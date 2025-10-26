@@ -28,79 +28,52 @@ async def shell_cmd(cmd):
     return out.decode("utf-8")
     
 async def get_stream_url(query, video=False):
-    """
-    ✅ Memory efficient & streaming friendly
-    - Uses cached file if available
-    - Hits API every time (hit count)
-    - Downloads file in chunks if not cached
-    - Returns local file path for Telegram VC streaming
-    """
 
-    # 🔹 API Configuration
+async def get_stream_url(query, video=False):
+    """
+    Updated function for NottyAPI YouTube API with Telegram caching support
+    Compatible with response format:
+    {
+        "url": "...",
+        "filename": "...",
+        "status": "success",
+        "cached": true,
+        "response_time": "0.00s"
+    }
+    """
+    
+    # 🔹 Your FastAPI server (NottyAPI)
     api_base = "https://nottyapi-254bfd1a99f5.herokuapp.com"
     api_key = "YDApAtNoG3-RGGC8pD3uJm_kQ9SJ2Bfi1x6NufcuTBI"
+    
+    # 🔹 Endpoint selection (ytmp3 or ytmp4)
     endpoint = "/ytmp4" if video else "/ytmp3"
     api_url = f"{api_base}{endpoint}"
 
-    # 🔹 Ensure downloads folder exists
-    os.makedirs("downloads", exist_ok=True)
-
-    # 🔹 Prepare safe local path
-    filename_safe = query.replace("/", "_").replace(":", "_")
-    ext = ".mp4" if video else ".mp3"
-    local_path = os.path.join("downloads", filename_safe + ext)
-
-    # 🔸 Check cache first
-    if os.path.exists(local_path) and os.path.getsize(local_path) > 1024:
-        print(f"🧠 Cached file found: {local_path}")
-
-        # 🔹 Hit API to increase hit count only
-        async with httpx.AsyncClient(timeout=30) as client:
-            try:
-                await client.get(api_url, params={"url": query, "api_key": api_key})
-                print(f"✅ API hit counted for {query}")
-            except Exception as e:
-                print(f"⚠️ API hit failed: {e}")
-
-        return local_path
-
-    # 🔹 If file not cached, download it in chunks
     async with httpx.AsyncClient(timeout=120) as client:
+        params = {"url": query, "api_key": api_key}
         try:
-            response = await client.get(api_url, params={"url": query, "api_key": api_key})
+            response = await client.get(api_url, params=params)
+            
+            # 🔸 Check for valid HTTP response
             if response.status_code != 200:
                 print(f"❌ HTTP Error: {response.status_code}")
-                return None
-
+                return ""
+            
             data = response.json()
-            if not (data.get("status") == "success" and data.get("url")):
-                print(f"⚠️ Unexpected API response: {data}")
-                return None
-
-            file_url = data["url"]
-            print(f"⬇️ Downloading: {local_path}")
-
-            # 🔹 Chunked download using aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.get(file_url) as resp:
-                    if resp.status != 200:
-                        print(f"❌ File download failed: HTTP {resp.status}")
-                        return None
-
-                    async with aiofiles.open(local_path, "wb") as f:
-                        while True:
-                            chunk = await resp.content.read(8192)  # 8 KB chunks
-                            if not chunk:
-                                break
-                            await f.write(chunk)
-
-            print(f"✅ Download complete: {local_path}")
-            return local_path
+            
+            # 🔸 Handle NottyAPI style response
+            if data.get("status") == "success" and data.get("url"):
+                print(f"✅ Stream URL fetched successfully: {data['url']}")
+                return data["url"]
+            
+            # 🔸 Optional debug info
+            print(f"⚠️ Unexpected API response: {data}")
+            return ""
 
         except Exception as e:
-            print(f"💥 Error downloading or hitting API: {e}")
-            return None
-
+            print(f"💥 Error calling NottyAPI: {e}")
+            return ""
 class YouTubeAPI:
     def __init__(self):
         self.base = "https://www.youtube.com/watch?v="
