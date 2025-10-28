@@ -28,51 +28,98 @@ async def shell_cmd(cmd):
             return errorz.decode("utf-8")
     return out.decode("utf-8")
 
+import os
+import aiofiles
+import asyncio
+import aiohttp
+import httpx
+
+async def background_cache(query, file_url, local_path):
+    """Cache file in background (non-blocking)"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(file_url) as resp:
+                if resp.status != 200:
+                    print(f"⚠️ Background cache failed (HTTP {resp.status})")
+                    return
+                async with aiofiles.open(local_path, "wb") as f:
+                    while True:
+                        chunk = await resp.content.read(8192)
+                        if not chunk:
+                            break
+                        await f.write(chunk)
+        print(f"✅ Cached in background: {local_path}")
+    except Exception as e:
+        print(f"⚠️ Cache failed: {e}")
+
+
+async def ping_api_for_hit(api_url, query, api_key):
+    """Send a light API hit for usage logging"""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.get(api_url, params={"url": query, "api_key": api_key})
+            print(f"🔁 API hit logged for {query}")
+    except Exception as e:
+        print(f"⚠️ API ping failed: {e}")
+
+
 async def get_stream_url(query, video=False):
     """
-    Updated function for NottyAPI YouTube API with Telegram caching support
-    Compatible with response format:
-    {
-        "url": "...",
-        "filename": "...",
-        "status": "success",
-        "cached": true,
-        "response_time": "0.00s"
-    }
+    ✅ Optimized version:
+       - Streams directly from API URL (no delay)
+       - Background caching (non-blocking)
+       - API hit every time (usage count)
+       - Returns streaming URL or cached path
     """
-    
-    # 🔹 Your FastAPI server (NottyAPI)
+
+    # 🔹 API Config
     api_base = "https://nottyapi-254bfd1a99f5.herokuapp.com"
     api_key = "YDApAtNoG3-RGGC8pD3uJm_kQ9SJ2Bfi1x6NufcuTBI"
-    
-    # 🔹 Endpoint selection (ytmp3 or ytmp4)
     endpoint = "/ytmp4" if video else "/ytmp3"
     api_url = f"{api_base}{endpoint}"
 
+    # 🔹 Folder setup
+    os.makedirs("downloads", exist_ok=True)
+
+    # 🔹 Safe local filename
+    filename_safe = query.replace("/", "_").replace(":", "_")
+    ext = ".mp4" if video else ".mp3"
+    local_path = os.path.join("downloads", filename_safe + ext)
+
+    # 🧠 If cached, return instantly
+    if os.path.exists(local_path) and os.path.getsize(local_path) > 1024:
+        print(f"⚡ Cached file found: {local_path}")
+
+        # API hit (for usage tracking)
+        asyncio.create_task(ping_api_for_hit(api_url, query, api_key))
+
+        return local_path  # use local cache
+
+    # 🆕 First-time query — fetch API stream URL
     async with httpx.AsyncClient(timeout=120) as client:
-        params = {"url": query, "api_key": api_key}
         try:
+            params = {"url": query, "api_key": api_key}
             response = await client.get(api_url, params=params)
-            
-            # 🔸 Check for valid HTTP response
             if response.status_code != 200:
-                print(f"❌ HTTP Error: {response.status_code}")
-                return ""
-            
+                print(f"❌ API Error: HTTP {response.status_code}")
+                return None
+
             data = response.json()
-            
-            # 🔸 Handle NottyAPI style response
-            if data.get("status") == "success" and data.get("url"):
-                print(f"✅ Stream URL fetched successfully: {data['url']}")
-                return data["url"]
-            
-            # 🔸 Optional debug info
-            print(f"⚠️ Unexpected API response: {data}")
-            return ""
+            if not (data.get("status") == "success" and data.get("url")):
+                print(f"⚠️ Unexpected API response: {data}")
+                return None
+
+            stream_url = data["url"]
+            print(f"🎧 Streaming directly from API URL: {stream_url}")
+
+            # Background caching (no wait)
+            asyncio.create_task(background_cache(query, stream_url, local_path))
+
+            return stream_url  # ✅ Return streaming link instantly
 
         except Exception as e:
-            print(f"💥 Error calling NottyAPI: {e}")
-            return ""
+            print(f"💥 Error fetching from API: {e}")
+            return None
 class YouTubeAPI:
     def __init__(self):
         self.base = "https://www.youtube.com/watch?v="
